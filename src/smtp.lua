@@ -63,8 +63,8 @@ function metat.__index:starttls(domain) --> greet results
     return socket.skip(1, self.try(self.tp:check("2..")))
 end
 
-function metat.__index:mail(from)
-    self.try(self.tp:command("MAIL", "FROM:" .. from))
+function metat.__index:mail(from, body)
+    self.try(self.tp:command("MAIL", "FROM:" .. from .. (body and (" BODY=" .. body) or "")))
     return self.try(self.tp:check("2.."))
 end
 
@@ -79,6 +79,26 @@ function metat.__index:data(src, step)
     self.try(self.tp:source(src, step))
     self.try(self.tp:send("\r\n.\r\n"))
     return self.try(self.tp:check("2.."))
+end
+
+function metat.__index:bdat(src, step)
+    local sink = function(chunk, err)
+        if not chunk then
+            -- we have ended
+            self.try(self.tp:command("BDAT", "0 LAST"))
+            -- we can't return a second value otherwise it is an error
+            return (self.try(self.tp:check("2..")))
+        elseif #chunk > 0 then
+            self.try(self.tp:command("BDAT", tostring(#chunk)))
+            self.try(self.tp:send(chunk))
+            -- we can't return a second value otherwise it is an error
+            return self.try(self.tp:check("2.."))
+        else
+            return 1
+        end
+    end
+
+    return self.try(ltn12.pump.all(src, sink, step or ltn12.pump.step))
 end
 
 function metat.__index:quit()
@@ -134,16 +154,31 @@ function metat.__index:auth(user, password, oauth2, ext)
 end
 
 -- send message or throw an exception
-function metat.__index:send(mailt)
-    self:mail(mailt.from)
-    if base.type(mailt.rcpt) == "table" then
-        for i,v in base.ipairs(mailt.rcpt) do
-            self:rcpt(v)
+function metat.__index:send(mailt, ext)
+    if mailt.binary then
+        if not ext or not string.find(ext, "BINARYMIME") or not string.find(ext, "CHUNKING") then
+            self.try(nil, "binarymime or chunking not supported")
         end
+        self:mail(mailt.from, "BINARYMIME")
+        if base.type(mailt.rcpt) == "table" then
+            for i,v in base.ipairs(mailt.rcpt) do
+                self:rcpt(v)
+            end
+        else
+            self:rcpt(mailt.rcpt)
+        end
+        self:bdat(mailt.source, mailt.step)
     else
-        self:rcpt(mailt.rcpt)
+        self:mail(mailt.from)
+        if base.type(mailt.rcpt) == "table" then
+            for i,v in base.ipairs(mailt.rcpt) do
+                self:rcpt(v)
+            end
+        else
+            self:rcpt(mailt.rcpt)
+        end
+        self:data(ltn12.source.chain(mailt.source, mime.stuff()), mailt.step)
     end
-    self:data(ltn12.source.chain(mailt.source, mime.stuff()), mailt.step)
 end
 
 function _M.open(server, port, create)
@@ -285,7 +320,7 @@ _M.send = socket.protect(function(mailt)
         ext = s:starttls(mailt.domain)
     end
     s:auth(mailt.user, mailt.password, mailt.oauth2, ext)
-    s:send(mailt)
+    s:send(mailt, ext)
     s:quit()
     return s:close()
 end)
