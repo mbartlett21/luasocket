@@ -47,6 +47,22 @@ function metat.__index:greet(domain)
     return socket.skip(1, self.try(self.tp:check("2..")))
 end
 
+function metat.__index:starttls(domain) --> greet results
+    self.try(self.tp:command("STARTTLS"))
+    self.try(self.tp:check("2.."))
+    -- we now wrap the connection
+    local worked, ssl = pcall(require, "ssl")
+    if not worked then
+        error('LuaSocket: LuaSec not found: ' .. ssl)
+    end
+    local wrap = assert(ssl.wrap,
+        'LuaSocket: Function wrap() not available from LuaSec')
+    self.tp.c = wrap(self.tp.c, { mode='client', protocol='any' })
+    self.try(self.tp.c:dohandshake())
+    self.try(self.tp:command("EHLO", domain or _M.DOMAIN))
+    return socket.skip(1, self.try(self.tp:check("2..")))
+end
+
 function metat.__index:mail(from)
     self.try(self.tp:command("MAIL", "FROM:" .. from))
     return self.try(self.tp:check("2.."))
@@ -247,6 +263,10 @@ end
 _M.send = socket.protect(function(mailt)
     local s = _M.open(mailt.server, mailt.port, mailt.create)
     local ext = s:greet(mailt.domain)
+    if ext:find'STARTTLS' then
+        -- we start tls now
+        ext = s:starttls(mailt.domain)
+    end
     s:auth(mailt.user, mailt.password, ext)
     s:send(mailt)
     s:quit()
