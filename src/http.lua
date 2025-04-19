@@ -29,17 +29,24 @@ _M.USERAGENT = socket._VERSION
 -- supported schemes and their particulars
 local SCHEMES = {
     http = {
-        port = 80
-        , create = function(t)
-            return socket.tcp end }
-    , https = {
-        port = 443
-        , create = function(t)
-          local https = assert(
-            require("ssl.https"), 'LuaSocket: LuaSec not found')
-          local tcp = assert(
-            https.tcp, 'LuaSocket: Function tcp() not available from LuaSec')
-          return tcp(t) end }}
+        port = 80,
+        create = function(t)
+            return socket.tcp
+        end
+    },
+    https = {
+        port = 443,
+        create = function(t)
+            local worked, https = pcall(require, "ssl.https")
+            if not worked then
+                error('LuaSocket: LuaSec not found: ' .. https)
+            end
+            local tcp = assert(https.tcp,
+                'LuaSocket: Function tcp() not available from LuaSec')
+            return tcp(t)
+        end
+    }
+}
 
 -----------------------------------------------------------------------------
 -- Reads MIME headers from a connection, unfolding where needed
