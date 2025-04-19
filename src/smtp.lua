@@ -105,11 +105,28 @@ function metat.__index:plain(user, password)
     return self.try(self.tp:check("2.."))
 end
 
-function metat.__index:auth(user, password, ext)
-    if not user or not password then return 1 end
-    if string.find(ext, "AUTH[^\n]+LOGIN") then
+function metat.__index:oauth2(user, token)
+    local auth =  mime.b64("user=" .. user .. "\1auth=Bearer " .. token .. "\1\1")
+    self.try(self.tp:command("AUTH", "XOAUTH2"))
+    self.try(self.tp:check("3.."))
+    -- Exchange/Outlook complains if we send it split into lines
+    self.try(self.tp:send(auth .. "\r\n"))
+    -- if we have a 3xx, then we need to send a blank to get a base64 encoded response
+    local code, reply = self.try(self.tp:check("[23].."))
+    if code >= 300 then -- it will be an error, but Gmail gives a base64 response first
+        self.try(self.tp:send('\r\n'))
+        code, reply = self.try(self.tp:check("2.."))
+    end
+    return code, reply
+end
+
+function metat.__index:auth(user, password, oauth2, ext)
+    if not user then return 1 end
+    if string.find(ext, "AUTH[^\n]+XOAUTH2") and oauth2 then
+        return self:oauth2(user, oauth2)
+    elseif string.find(ext, "AUTH[^\n]+LOGIN") and password then
         return self:login(user, password)
-    elseif string.find(ext, "AUTH[^\n]+PLAIN") then
+    elseif string.find(ext, "AUTH[^\n]+PLAIN") and password then
         return self:plain(user, password)
     else
         self.try(nil, "authentication not supported")
@@ -267,7 +284,7 @@ _M.send = socket.protect(function(mailt)
         -- we start tls now
         ext = s:starttls(mailt.domain)
     end
-    s:auth(mailt.user, mailt.password, ext)
+    s:auth(mailt.user, mailt.password, mailt.oauth2, ext)
     s:send(mailt)
     s:quit()
     return s:close()
